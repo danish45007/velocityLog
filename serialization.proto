@@ -1,1 +1,45 @@
 syntax = "proto3";
+
+package grpcapi;
+
+option go_package = "github.com/danish45007/velocitylog";
+
+// Command enum for the type of operation
+enum Command {
+	PUT = 0;
+	DELETE = 1;
+	WRITE_SST = 2;
+}
+
+// LSMEntry is the structure of the data that is stored in the LSM tree
+message LSMEntry {
+	string key = 1;
+	Command command = 2;
+	optional bytes value = 3;
+	int64 timestamp = 4;
+}
+
+// BloomFilter is the structure of the bloom filter
+message BloomFilter {
+	repeated bool bitset = 1;
+	int64 size = 2;
+}
+
+// IndexEntry is the structure of the index entry used in the index
+message IndexEntry {
+	string key = 1;
+	int64 offset = 2;
+}
+
+// Index is the index of a SST
+message Index {
+	repeated IndexEntry index = 1;
+}
+
+// WAL is the structure of the write ahead log
+message WALEntry {
+	string key = 1;
+	Command command = 2;
+	optional bytes value = 3;
+	int64 timestamp = 4;
+}
