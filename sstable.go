@@ -34,3 +34,36 @@ The data entries are written in the following format:
 1. Size of the entry (OffsetSize)
 2. Entry data (LSMEntry ProtoBuf)
 */
+func SerializeToSSTable(messages []*LSMEntry, filename string) (*SSTable, error) {
+	bloomFilter, index, buffEntries, err := generateMetaDataAndEntriesBuffer(messages)
+	if err != nil {
+		return nil, err
+	}
+	indexData := MarshalEntry(index)
+	bloomFilterData := MarshalEntry(bloomFilter)
+
+	dataOffset, err := WriteToSSTable(filename, bloomFilterData, indexData, buffEntries)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	return &SSTable{
+		bloomFilter: bloomFilter,
+		index:       index,
+		file:        file,
+		dataOffset:  dataOffset,
+	}, nil
+
+}
+
+// OpenSSTable opens an SSTable file and returns an SSTable object for reading.
+func OpenSSTable(filename string) (*SSTable, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	bloomFilterData, indexData, dataOffset, err := readSSTableMetadata(file)
+}
