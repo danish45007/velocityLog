@@ -240,6 +240,6 @@ func (it *SSTableIterator) Next() *SSTableIterator {
 }
 
 // Closes the iterator.
-func (i *SSTableIterator) Close() error {
-	return i.file.Close()
+func (it *SSTableIterator) Close() error {
+	return it.file.Close()
 }
