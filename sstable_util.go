@@ -95,6 +95,15 @@ func readDataSize(file *os.File) (EntrySize, error) {
 	return size, nil
 }
 
+// readEntryFromFile reads a single entry of the given size from the file.
+func readEntryFromFile(file *os.File, size EntrySize) ([]byte, error) {
+	data := make([]byte, size)
+	if _, err := file.Read(data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 // readSSTableMetadata reads the bloom filter, index and data offset from the SSTable file.
 func readSSTableMetadata(file *os.File) (*BloomFilter, *Index, EntrySize, error) {
 	var dataOffset EntrySize = InitialOffset
@@ -139,4 +148,43 @@ func readSSTableMetadata(file *os.File) (*BloomFilter, *Index, EntrySize, error)
 
 	return bloomFilter, index, dataOffset, nil
 
+}
+
+// findOffsetForKey finds the offset of the key in the SSTable index using binary search.
+func findOffsetForKey(key string, index []*IndexEntry) (EntrySize, bool) {
+	low, high := 0, len(index)-1
+	for low <= high {
+		mid := low + (high-low)/2
+		if index[mid].Key == key {
+			return EntrySize(index[mid].Offset), true
+		}
+		if index[mid].Key < key {
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	return 0, false
+}
+
+// finds the start offset key for the range scan.
+// The start offset key is the smallest key in the SSTable that is greater than or equal to the start key.
+// using binary search.
+func findStartOffsetForRangeScan(index []*IndexEntry, startKey string) (EntrySize, bool) {
+	low, high := 0, len(index)-1
+	for low <= high {
+		mid := low + (high-low)/2
+		if index[mid].Key == startKey {
+			return EntrySize(index[mid].Offset), true
+		} else if index[mid].Key < startKey {
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	// if the key is not found, low will be the index of the smallest key that is greater than the start key.
+	if low >= len(index) {
+		return 0, false
+	}
+	return EntrySize(index[low].Offset), true
 }
