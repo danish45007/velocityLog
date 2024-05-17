@@ -1,10 +1,10 @@
 # 2. use-memtable-as-in-memory-buffer
 
+## Author: Danish
+
 Date: 2024-04-06
 
-## Status
-
-Accepted
+## Status: Accepted
 
 Supercedes [1. Record architecture decisions](0001-record-architecture-decisions.md)
 
