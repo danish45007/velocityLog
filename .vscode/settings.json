@@ -3,6 +3,8 @@
 		"huandu",
 		"Memtable",
 		"memtables",
-		"skiplist"
+		"skiplist",
+		"sstable",
+		"sstables"
 	]
 }
