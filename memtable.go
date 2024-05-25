@@ -38,7 +38,7 @@ func (m *Memtable) Put(key string, value []byte) {
 	}
 
 	// update with new entry
-	entry := getLSMEntry(key, &value, COMMAND_PUT)
+	entry := getLSMEntry(key, &value, Command_PUT)
 	m.data.Set(key, entry)
 	// update the size of the memtable by adding the size of the value
 	m.size += valueSize
@@ -57,7 +57,7 @@ func (m *Memtable) Delete(key string) {
 		m.size += int64(len(key))
 	}
 	// update with new entry
-	entry := getLSMEntry(key, nil, COMMAND_DELETE)
+	entry := getLSMEntry(key, nil, Command_DELETE)
 	m.data.Set(key, entry)
 }
 

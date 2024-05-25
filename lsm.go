@@ -3,6 +3,7 @@ package velocitylog
 import (
 	"context"
 	sync "sync"
+	"time"
 
 	wal "github.com/danish45007/GoLogMatrix"
 )
@@ -125,5 +126,40 @@ func (l *LSMTree) Close() error {
 	// close te channels
 	close(l.flushingChan)
 	close(l.compactionChan)
+	return nil
+}
+
+// Put, Insert a key-value pair into the LSM tree.
+func (l *LSMTree) Put(key string, value []byte) error {
+	// acquire the lock to protect the memtable
+	l.memLock.Lock()
+	defer l.memLock.Unlock()
+
+	// Write to WAL before to memtable. And we don't need to write entries to WAL if we are recovering from WAL.
+	if !l.inRecovery {
+		marshalEntry := MarshalEntry(&WALEntry{
+			Key:       key,
+			Command:   Command_PUT,
+			Value:     value,
+			Timestamp: time.Now().UnixNano(),
+		})
+		l.wal.WriteEntity(marshalEntry)
+	}
+	// insert the key-value pair into the memtable.
+	l.memtable.Put(key, value)
+
+	// check if the memtable has reached the maximum size and need to be flushed to SSTable.
+	if l.memtable.SizeInBytes() > l.maxMemtableSize {
+		// acquire the lock to protect the flushing queue.
+		l.flushingLock.Lock()
+		// add the current memtable to the flushing queue.
+		l.flushingQueue = append(l.flushingQueue, l.memtable)
+		// release the lock to protect the flushing queue.
+		l.flushingLock.Unlock()
+		// signal the background memtable flushing process to flush the memtable.
+		l.flushingChan <- l.memtable
+		// initialize a new memtable.
+		l.memtable = NewMemtable()
+	}
 	return nil
 }
