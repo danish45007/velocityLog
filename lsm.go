@@ -29,7 +29,7 @@ type LSMTree struct {
 	levels          []*level           // List of levels in the LSM tree.
 	currentSSTSeq   uint64             // Next sequence number for the SSTable.
 	compactionChan  chan int           // Channel for triggering compaction at a level.
-	flushingLock    sync.Mutex         // Lock to protect the flushing queue.
+	flushingLock    sync.RWMutex       // Lock to protect the flushing queue.
 	flushingQueue   []*Memtable        // Queue of memtables to be flushed to SSTable. Used to serve reads while flushing.
 	flushingChan    chan *Memtable     // Channel for triggering flushing of memtables to SSTables.
 	ctx             context.Context    // Context for the LSM tree.
@@ -162,4 +162,88 @@ func (l *LSMTree) Put(key string, value []byte) error {
 		l.memtable = NewMemtable()
 	}
 	return nil
+}
+
+// Delete, Delete a key from the LSM tree.
+func (l *LSMTree) Delete(key string) error {
+	// acquire the lock to protect the memtable.
+	l.memLock.Lock()
+	defer l.memLock.Unlock()
+
+	// Write to WAL before to memtable. And we don't need to write entries to WAL if we are recovering from WAL.
+	if !l.inRecovery {
+		marshalEntry := MarshalEntry(&WALEntry{
+			Key:       key,
+			Command:   Command_DELETE,
+			Timestamp: time.Now().UnixNano(),
+		})
+		l.wal.WriteEntity(marshalEntry)
+	}
+	// insert a tombstone for the key in the memtable.
+	l.memtable.Delete(key)
+
+	// check if the memtable has reached the maximum size and need to be flushed to SSTable.
+	if l.memtable.SizeInBytes() > l.maxMemtableSize {
+		// acquire the lock to protect the flushing queue.
+		l.flushingLock.Lock()
+		// add the current memtable to the flushing queue.
+		l.flushingQueue = append(l.flushingQueue, l.memtable)
+		// release the lock to protect the flushing queue.
+		l.flushingLock.Unlock()
+		// signal the background memtable flushing process to flush the memtable.
+		l.flushingChan <- l.memtable
+		// initialize a new memtable.
+		l.memtable = NewMemtable()
+	}
+	return nil
+}
+
+// Get, Retrieve a value for a given key from the LSM tree.
+// if the key is not found returns nil, otherwise returns the value.
+// it will search the memtable first, then search the SSTables.
+
+func (l *LSMTree) Get(key string) ([]byte, error) {
+	// acquire a read lock on memtable.
+	l.memLock.RLock()
+	// search the memtable for the key.
+	value := l.memtable.Get(key)
+	if value != nil {
+		l.memLock.RUnlock()
+		return processAndReturnEntry(value)
+	}
+	l.memLock.RUnlock()
+
+	// search in the flush queue.
+	l.flushingLock.RLock()
+	// search in reverse order to look for the most recent memtable.
+	for i := len(l.flushingQueue) - 1; i >= 0; i-- {
+		value = l.flushingQueue[i].Get(key)
+		if value != nil {
+			l.flushingLock.RUnlock()
+			return processAndReturnEntry(value)
+		}
+	}
+	l.flushingLock.RUnlock()
+
+	// search in the SSTables.
+	// iterate through all the levels in the LSM tree.
+	for level := range l.levels {
+		// acquire a read lock on the level.
+		l.levels[level].sstablesLock.RLock()
+		// iterate through all the SSTables in the level in reverse order.
+		for i := len(l.levels[level].sstables) - 1; i >= 0; i-- {
+			// search for the key in the SSTable.
+			value, err := l.levels[level].sstables[i].Get(key)
+			if err != nil {
+				l.levels[level].sstablesLock.RUnlock()
+				return nil, err
+			}
+			if value != nil {
+				l.levels[level].sstablesLock.RUnlock()
+				return processAndReturnEntry(value)
+			}
+		}
+		l.levels[level].sstablesLock.RUnlock()
+	}
+	return nil, nil
 }
