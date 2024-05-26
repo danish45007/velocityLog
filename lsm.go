@@ -8,6 +8,19 @@ import (
 	wal "github.com/danish45007/GoLogMatrix"
 )
 
+// maxSSTableInLevel is the maximum number of SSTables in each level of the LSM tree.
+// factor of 2 is used to increase the number of SSTables in each level.
+// Initially, the number of SSTables in each level is 4 and in total there are 6 levels.
+var maxSSTableInLevel = map[int]int{
+	0: 4,
+	1: 8,
+	2: 16,
+	3: 32,
+	4: 64,
+	5: 128,
+	6: 256,
+}
+
 // level represents a level in the LSM tree.
 type level struct {
 	sstablesLock sync.RWMutex // Lock to protect the sstables.
@@ -300,4 +313,71 @@ func (l *LSMTree) RangeScan(startKey string, endKey string) ([]KVPair, error) {
 		}
 	}
 	return mergeRanges(ranges), nil
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+// Utility functions for LSM Tree
+///////////////////////////////////////////////////////////////////////////////////
+
+//backgroundMemtableFlushing, is a background process that continuously listens on the flushing channel
+// for memtables that need to be flushed to SSTable until the context is Done or canceled.
+func (l *LSMTree) backgroundMemtableFlushing() error {
+	// defer the wait group to signal the completion of the background process.
+	defer l.wg.Done()
+	for {
+		select {
+		// check if the context is done.
+		case <-l.ctx.Done():
+			// check if there are any memtables in the flushing c
+			if len(l.flushingChan) == 0 {
+				return nil
+			}
+		// wait for a memtable to be flushed.
+		case memtable := <-l.flushingChan:
+			// flush the memtable
+			l.flushMemtable(memtable)
+		}
+	}
+
+}
+
+// backgroundCompaction, is a background process that continuously listens on the compaction channel
+// for levels that need to be compacted until the context is Done or canceled.
+// It uses Tiered compaction strategy to compact the levels in the LSM tree.
+
+func (l *LSMTree) backgroundCompaction() error {
+	// defer the wait group to signal the completion of the background process.
+	defer l.wg.Done()
+	for {
+		select {
+		case <-l.ctx.Done():
+			// check if there are any levels that need to be compacted.
+			if readyToExit := l.checkAndTriggerCompaction(); readyToExit {
+				return nil
+			}
+		case compactionCandidate := <-l.compactionChan:
+			// compact the level.
+			l.compactLevel(compactionCandidate)
+		}
+	}
+}
+
+// checkAndTriggerCompaction, check of all the levels have less than the maximum number of SSTables.
+// if any level has more than the maximum number of SSTables, trigger compaction for that level.
+// returns true if all the levels are ready to exit, otherwise false.
+func (l *LSMTree) checkAndTriggerCompaction() bool {
+	readyToExit := true
+	// iterate through all the levels in the LSM tree.
+	for i, level := range l.levels {
+		// acquire a read lock on the level
+		level.sstablesLock.RLock()
+		// check if the level has more than the maximum number of SSTables.
+		if len(level.sstables) > maxSSTableInLevel[i] {
+			// trigger compaction for the level.
+			l.compactionChan <- i
+			readyToExit = false
+		}
+		level.sstablesLock.RUnlock()
+	}
+	return readyToExit
 }
