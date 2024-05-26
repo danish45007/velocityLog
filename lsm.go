@@ -247,3 +247,57 @@ func (l *LSMTree) Get(key string) ([]byte, error) {
 	}
 	return nil, nil
 }
+
+// RangeScan, returns all key-value pairs in the LSM tree within the given key range [startKey, endKey]
+// the entries are returned in sorted order
+
+func (l *LSMTree) RangeScan(startKey string, endKey string) ([]KVPair, error) {
+	ranges := [][]*LSMEntry{}
+	// acquire all the locks together to ensure a consistent view of the LSM tree for the range scan.
+
+	// acquire a read lock on the memtable.
+	l.memLock.RLock()
+	defer l.memLock.RUnlock()
+
+	// acquire a read lock on all the levels in the LSM tree.
+	for _, level := range l.levels {
+		level.sstablesLock.RLock()
+		defer level.sstablesLock.RUnlock()
+	}
+
+	// acquire a read lock on the flushing queue.
+	l.flushingLock.RLock()
+	defer l.flushingLock.RUnlock()
+
+	// search in the memtable.
+	entries := l.memtable.RangeScan(startKey, endKey)
+	// add the entries to the ranges.
+	if len(entries) > 0 {
+		ranges = append(ranges, entries)
+	}
+
+	// search in the flushing queue.
+	for i := len(l.flushingQueue) - 1; i >= 0; i-- {
+		entries = l.flushingQueue[i].RangeScan(startKey, endKey)
+		if len(entries) > 0 {
+			ranges = append(ranges, entries)
+		}
+	}
+
+	// search in the SSTables.
+	// iterate through all the levels in the LSM tree.
+	for _, level := range l.levels {
+		// iterate through all the SSTables in the level in reverse order.
+		for i := len(level.sstables) - 1; i >= 0; i-- {
+			// search for the key in the SSTable.
+			entries, err := level.sstables[i].RangeScan(startKey, endKey)
+			if err != nil {
+				return nil, err
+			}
+			if len(entries) > 0 {
+				ranges = append(ranges, entries)
+			}
+		}
+	}
+	return mergeRanges(ranges), nil
+}
