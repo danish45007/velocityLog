@@ -2,6 +2,7 @@ package velocitylog
 
 import (
 	"context"
+	"os"
 	sync "sync"
 	"time"
 
@@ -316,7 +317,7 @@ func (l *LSMTree) RangeScan(startKey string, endKey string) ([]KVPair, error) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
-// Utility functions for LSM Tree
+// Utility functions for LSM Tree                                                 /
 ///////////////////////////////////////////////////////////////////////////////////
 
 //backgroundMemtableFlushing, is a background process that continuously listens on the flushing channel
@@ -371,13 +372,117 @@ func (l *LSMTree) checkAndTriggerCompaction() bool {
 	for i, level := range l.levels {
 		// acquire a read lock on the level
 		level.sstablesLock.RLock()
-		// check if the level has more than the maximum number of SSTables.
+		// check if the level has more than the maximum number of .
 		if len(level.sstables) > maxSSTableInLevel[i] {
-			// trigger compaction for the level.
+			// trigger compaction for the level.SSTables
 			l.compactionChan <- i
 			readyToExit = false
 		}
 		level.sstablesLock.RUnlock()
 	}
 	return readyToExit
+}
+
+// compactLevel, compacts the SSTables in the level using the Tiered compaction strategy.
+func (l *LSMTree) compactLevel(compactionCandidate int) error {
+	// check if reached the maximum number of levels in the LSM tree.
+	if compactionCandidate == MaxLevels-1 {
+		return nil
+	}
+
+	// lock the level while we check we need to compact.
+	l.levels[compactionCandidate].sstablesLock.Lock()
+
+	// check if the number of SSTables in the level is less than the maximum number of SSTables.
+	if len(l.levels[compactionCandidate].sstables) <= maxSSTableInLevel[compactionCandidate] {
+		l.levels[compactionCandidate].sstablesLock.Unlock()
+		return nil
+	}
+
+	// get the iterator for the SSTables in this level to compact.
+	_, iterators := l.getSSTablesAtLevel(compactionCandidate)
+
+	// we are free to release the lock on the level now while we process the SSTables.
+	//This is safe because these SSTables are immutable and will be deleted by this method
+	// which is single-threaded and will not be accessed by any other goroutine.
+
+	l.levels[compactionCandidate].sstablesLock.Unlock()
+
+	// merge all SSTables into a single SSTable.
+	mergedSSTable, err := l.mergeSSTables(iterators, compactionCandidate+1)
+	if err != nil {
+		return err
+	}
+	// acquire a write lock on the level and next level.
+	l.levels[compactionCandidate].sstablesLock.Lock()
+	l.levels[compactionCandidate+1].sstablesLock.Lock()
+
+	// delete the old SSTables from the level.
+	l.deleteSSTableAtLevel(compactionCandidate, iterators)
+
+	// add new SSTable to the next level.
+	l.addSSTableAtLevel(mergedSSTable, compactionCandidate+1)
+
+	// release the lock on the level and next level.
+	l.levels[compactionCandidate].sstablesLock.Unlock()
+	l.levels[compactionCandidate+1].sstablesLock.Unlock()
+
+	return nil
+}
+
+// loadSSTables, loads all the SSTables from disk into memory.
+// sorts the SSTables based on the sequence number, method is called on startup.
+func (l *LSMTree) loadSSTables() error {
+	if err := os.Mkdir(l.directory, 0755); err != nil {
+		return err
+	}
+	if err := l.loadSSTablesFromDisk(); err != nil {
+		return err
+	}
+	l.sortSSTablesBySequenceNumber()
+	l.initalizeCurrentSequenceNumber()
+	return nil
+}
+
+// loadSSTablesFromDisk, loads all the all the files from disk into memory.
+// that have the SSTableFilePrefix.
+func (l *LSMTree) loadSSTablesFromDisk() error {
+	files, err := os.ReadDir(l.directory)
+	if err != nil {
+		return err
+	}
+	for _, file := range files {
+		// check if the file is a directory or not an SSTable file.
+		if file.IsDir() || !isSSTableFile(file.Name()) {
+			continue
+		}
+		sstable, err := OpenSSTable(l.directory + "/" + file.Name())
+		if err != nil {
+			return err
+		}
+		level := l.getLevelFromSStableFilename(sstable.file.Name())
+		l.levels[level].sstables = append(l.levels[level].sstables, sstable)
+	}
+	return nil
+}
+
+// recoverFromWAL, reads all the entries from WAL, after the last checkpoint
+// It will give us all the entries that were written to the memtable but not flushed to SSTable.
+func (l *LSMTree) recoverFromWAL() error {
+	l.inRecovery = true
+	defer func() {
+		l.inRecovery = false
+	}()
+	// read all entries from WAL, after the last checkpoint.
+	entries, err := l.readEntriesFromWAL()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		// process the entry
+		if err := l.processWALEntry(entry); err != nil {
+			return err
+		}
+	}
+	return nil
 }

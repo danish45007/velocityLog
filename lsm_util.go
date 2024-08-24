@@ -8,3 +8,8 @@ func processAndReturnEntry(entry *LSMEntry) ([]byte, error) {
 	}
 	return entry.Value, nil
 }
+
+// Checks if the given filename is an SSTable file.
+func isSSTableFile(filename string) bool {
+	return filename[:len(SSTableFilePrefix)] == SSTableFilePrefix
+}
