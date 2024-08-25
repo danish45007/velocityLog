@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	sync "sync"
+	"sync/atomic"
 	"time"
 
 	wal "github.com/danish45007/GoLogMatrix"
@@ -485,4 +486,92 @@ func (l *LSMTree) recoverFromWAL() error {
 		}
 	}
 	return nil
+}
+
+// mergeSSTables, runs merge on the iterator and create a new SSTables with the merged entries.
+func (l *LSMTree) mergeSSTables(iterators []*SSTableIterator, targetLevel int) (*SSTable, error) {
+	mergedEntries := mergeIterators(iterators)
+
+	sstableFileName := l.getSSTableFilename(targetLevel)
+
+	sst, err := SerializeToSSTable(mergedEntries, sstableFileName)
+	if err != nil {
+		return nil, err
+	}
+	return sst, nil
+}
+
+// getSSTablesAtLevel, returns the sstables and its iterators at the given level. (Not Thread-Safe Implementation)
+func (l *LSMTree) getSSTablesAtLevel(level int) ([]*SSTable, []*SSTableIterator) {
+	// get the sstables at the level
+	sstables := l.levels[level].sstables
+	// create an iterator for each SSTable.
+	iterators := make([]*SSTableIterator, len(sstables))
+	// iterate through all the SSTables in the level.
+	for i, sstable := range sstables {
+		iterators[i] = sstable.Front()
+	}
+	return sstables, iterators
+
+}
+
+// deleteSSTableAtLevel, deletes the SSTables from the level. (Not Thread-Safe Implementation)
+func (l *LSMTree) deleteSSTableAtLevel(level int, iterators []*SSTableIterator) {
+	// remove the SSTables from the level.
+	l.levels[level].sstables = l.levels[level].sstables[len(iterators):]
+	// delete the SSTables from disk.
+	for _, iterator := range iterators {
+		// delete the file pointed by the iterator.
+		if err := os.Remove(iterator.sst.file.Name()); err != nil {
+			panic(err)
+		}
+	}
+}
+
+// addSSTableAtLevel, adds the SSTable to the level. (Not Thread-Safe Implementation)
+func (l *LSMTree) addSSTableAtLevel(sstable *SSTable, level int) {
+	l.levels[level].sstables = append(l.levels[level].sstables, sstable)
+	// send a signal on the compaction channel that a new sstable has been added to the level.
+	l.compactionChan <- level
+}
+
+// flushMemtable, flushes the memtable to an on-disk SSTable.
+func (l *LSMTree) flushMemtable(memtable *Memtable) {
+	if memtable.size == 0 {
+		return
+	}
+	// increment the sequence number with atomic operation.
+	// the sequence number is shared across multiple goroutines.
+	// and we need to ensure that the sequence number is unique.
+	atomic.AddUint64(&l.currentSSTSeq, 1)
+	// get the filename for the SSTable.
+	sstableFileName := l.getSSTableFilename(0)
+	// serialize the memtable to an SSTable.
+	sst, err := SerializeToSSTable(memtable.GenerateEntries(), sstableFileName)
+	if err != nil {
+		panic(err)
+	}
+	// acquire a write lock on the level.
+	l.levels[0].sstablesLock.Lock()
+	// acquire lock on flush queue.
+	l.flushingLock.Lock()
+
+	// create a wal checkpoint for the SSTable.
+	l.wal.CreateCheckPoint(
+		MarshalEntry(&WALEntry{
+			Key:       sstableFileName,
+			Command:   Command_WRITE_SST,
+			Timestamp: time.Now().UnixNano(),
+		}))
+
+	// add the SSTable to the level.
+	l.levels[0].sstables = append(l.levels[0].sstables, sst)
+	// remove the memtable from the flushing queue.
+	l.flushingQueue = l.flushingQueue[1:] // remove the first element. (FIFO)
+	// release the lock on the flush queue.
+	l.flushingLock.Unlock()
+	// release the lock on the level.
+	l.levels[0].sstablesLock.Unlock()
+	// send a signal on the compaction channel that a new sstable has been added to the level.
+	l.compactionChan <- 0
 }
