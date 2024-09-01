@@ -1,6 +1,6 @@
 module github.com/danish45007/velocitylog
 
-go 1.22.0
+go 1.22
 
 require (
 	github.com/danish45007/GoLogMatrix v0.0.0-20240825185807-bed714241d4b
