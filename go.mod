@@ -8,4 +8,4 @@ require (
 	google.golang.org/protobuf v1.33.0
 )
 
-require github.com/danish45007/GoLogMatrix v0.0.0-20240329212143-4cea62e36e3c // indirect
+require github.com/danish45007/GoLogMatrix v0.0.0-20240825185807-bed714241d4b // indirect

@@ -2,7 +2,11 @@ package velocitylog
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	sync "sync"
 	"sync/atomic"
 	"time"
@@ -441,7 +445,7 @@ func (l *LSMTree) loadSSTables() error {
 		return err
 	}
 	l.sortSSTablesBySequenceNumber()
-	l.initalizeCurrentSequenceNumber()
+	l.initializeCurrentSequenceNumber()
 	return nil
 }
 
@@ -461,7 +465,7 @@ func (l *LSMTree) loadSSTablesFromDisk() error {
 		if err != nil {
 			return err
 		}
-		level := l.getLevelFromSStableFilename(sstable.file.Name())
+		level := l.getLevelFromSSTableFilename(sstable.file.Name())
 		l.levels[level].sstables = append(l.levels[level].sstables, sstable)
 	}
 	return nil
@@ -574,4 +578,107 @@ func (l *LSMTree) flushMemtable(memtable *Memtable) {
 	l.levels[0].sstablesLock.Unlock()
 	// send a signal on the compaction channel that a new sstable has been added to the level.
 	l.compactionChan <- 0
+}
+
+// readEntriesFromWAL, reads all the entries from WAL after the last checkpoint.
+// returns all the entries that were written to the memtable but not flushed to SSTable.
+func (l *LSMTree) readEntriesFromWAL() ([]*wal.WAL_Entry, error) {
+	entries, err := l.wal.ReadAllFromOffset(-1, true)
+	if err != nil {
+		// attempt to repair the WAL if it is corrupted.
+		_, err := l.wal.Repair()
+		if err != nil {
+			return nil, err
+		}
+		// read all entries from WAL after the last checkpoint.
+		entries, err = l.wal.ReadAllFromOffset(-1, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return entries, nil
+}
+
+// processWALEntry, process the WAL entry, it is used to recover the entries from WAL.
+// it reads the wal entries and performs the corresponding operation on the LSM tree.
+func (l *LSMTree) processWALEntry(entry *wal.WAL_Entry) error {
+	// check if the entry is a checkpoint and skip it.
+	if entry.GetIsCheckPoint() {
+		// NOTE: we may use this checkpoint entry to recover in more sophisticated scenarios.
+		return nil
+	}
+	walEntry := WALEntry{}
+	// unmarshal the entry.
+	UnmarshalEntry(entry.GetData(), &walEntry)
+
+	// process the entry based on the command.
+	switch walEntry.Command {
+	case Command_PUT:
+		return l.Put(walEntry.Key, walEntry.Value)
+	case Command_DELETE:
+		return l.Delete(walEntry.Key)
+	case Command_WRITE_SST:
+		return errors.New("unexpected SSTable write entry in WAL")
+	default:
+		return errors.New("unknown command in WAL entry")
+	}
+}
+
+// sortSSTablesBySequenceNumber, sorts the SSTables in each level based on the sequence number.
+func (l *LSMTree) sortSSTablesBySequenceNumber() {
+	for _, level := range l.levels {
+		sort.Slice(level.sstables, func(i, j int) bool {
+			iSequence := l.getSequenceNumber(level.sstables[i].file.Name())
+			jSequence := l.getSequenceNumber(level.sstables[j].file.Name())
+			return iSequence < jSequence
+		})
+	}
+}
+
+// returns the sequence number from the sstable filename.
+// example: sstable_0_123 -> 123
+func (l *LSMTree) getSequenceNumber(filename string) uint64 {
+	// directory + "/" + sstable_ + level (single digit) + _ + 1
+	sequenceStr := filename[len(l.directory)+1+2+len(SSTableFilePrefix):]
+	sequence, err := strconv.ParseUint(sequenceStr, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return sequence
+}
+
+// Get the level from the SSTable filename.
+// Example: sstable_0_123 -> 0
+func (l *LSMTree) getLevelFromSSTableFilename(filename string) int {
+	// directory + "/" + sstable_ + level (single digit) + _ + 1
+	levelStr := filename[len(l.directory)+1+len(SSTableFilePrefix) : len(l.directory)+2+len(SSTableFilePrefix)]
+	level, err := strconv.Atoi(levelStr)
+	if err != nil {
+		panic(err)
+	}
+	return level
+}
+
+// Set the current_sst_sequence to the maximum sequence number found in any of
+// the SSTables.
+func (l *LSMTree) initializeCurrentSequenceNumber() error {
+	var maxSequence uint64
+	for _, level := range l.levels {
+		if len(level.sstables) > 0 {
+			lastSSTable := level.sstables[len(level.sstables)-1]
+			sequence := l.getSequenceNumber(lastSSTable.file.Name())
+			if sequence > maxSequence {
+				maxSequence = sequence
+			}
+		}
+	}
+
+	atomic.StoreUint64(&l.currentSSTSeq, maxSequence)
+
+	return nil
+}
+
+// Get the filename for the next SSTable.
+func (l *LSMTree) getSSTableFilename(level int) string {
+	return fmt.Sprintf("%s/%s%d_%d", l.directory, SSTableFilePrefix, level, atomic.LoadUint64(&l.currentSSTSeq))
 }
