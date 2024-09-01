@@ -23,8 +23,8 @@ func NewMemtable() *Memtable {
 
 // Put inserts a key-value pair into the memtable, Not Thread-Safe Implementation.
 func (m *Memtable) Put(key string, value []byte) {
-	// Calculate the size of the value
-	valueSize := int64(len(value))
+	// Calculate the size of the value.
+	sizeChange := int64(len(value))
 	// check if the key already exists in the memtable
 	existingValue := m.data.Get(key)
 	if existingValue != nil {
@@ -34,14 +34,14 @@ func (m *Memtable) Put(key string, value []byte) {
 	} else {
 		// if the key does not exist, update the size of the memtable
 		// by adding the size of the key
-		m.size += int64(len(key))
+		sizeChange += int64(len(key))
 	}
 
 	// update with new entry
 	entry := getLSMEntry(key, &value, Command_PUT)
 	m.data.Set(key, entry)
 	// update the size of the memtable by adding the size of the value
-	m.size += valueSize
+	m.size += sizeChange
 }
 
 // Delete deletes a key from the memtable, Not Thread-Safe Implementation.
@@ -82,14 +82,16 @@ func (m *Memtable) RangeScan(startKey, endKey string) []*LSMEntry {
 	// Find the first entry that is greater than or equal to the start key.
 	// and use the Next method to iterate through the entries.
 	iterator := m.data.Find(startKey)
+
 	for iterator != nil {
+		// If the key is greater than the end key, break the loop.
 		if iterator.Element().Key().(string) > endKey {
 			break
 		}
 		// We need to include the tombstones in the range scan.
 		// The caller need checks the command field in the LSMEntry to determine
 		// if the entry is a tombstone or not.
-		results = append(results, iterator.Element().Value.(*LSMEntry))
+		results = append(results, iterator.Value.(*LSMEntry))
 		iterator = iterator.Next()
 	}
 	return results
@@ -104,6 +106,10 @@ func (m *Memtable) SizeInBytes() int64 {
 func (m *Memtable) Clear() {
 	m.data.Init() // Initialize the skip list.
 	m.size = 0    // Reset the size to 0.
+}
+
+func (m *Memtable) Len() int {
+	return m.data.Len()
 }
 
 // GenerateEntries returns a serializable list of memtable entries in sorted order. Not Thread-Safe Implementation.
