@@ -158,6 +158,263 @@ func TestSSTableRangeScanNonExistentRange(t *testing.T) {
 	}
 }
 
+// Test RangeScan on an SSTable with non-exact Range.
+// func TestSSTableRangeScanNonExactRange(t *testing.T) {
+// 	t.Parallel()
+// 	var reopenFile bool = true
+// 	for i := 0; i < 2; i++ {
+// 		testFileName := "TestSStableRangeScanNonExactRange1.sst"
+// 		// Create a new LSM memtable.
+// 		memtable := velocitylog.NewMemtable()
+
+// 		populateMemtableWithTestData(memtable)
+
+// 		// Write the memtable to an SSTable.
+// 		sstable, err := velocitylog.SerializeToSSTable(memtable.GenerateEntries(), testFileName)
+// 		assert.Nil(t, err)
+// 		defer sstable.Close()
+
+// 		if reopenFile {
+// 			if err := sstable.Close(); err != nil {
+// 				t.Fatal(err)
+// 			}
+// 			// Open the SSTable for reading.
+// 			sstable, err = velocitylog.OpenSSTable(testFileName)
+// 			assert.Nil(t, err)
+// 		}
+
+// 		// Range scan the SSTable.
+// 		entries, err := sstable.RangeScan("a", "z")
+// 		assert.Nil(t, err)
+// 		assert.Equal(t, 5, len(entries))
+
+// 		assert.Equal(t, []byte("value1"), entries[0].Value)
+// 		assert.NotNil(t, entries[0].Timestamp, "Timestamp should not be nil")
+
+// 		assert.Equal(t, pb.Command_DELETE, entries[1].Command)
+// 		assert.NotNil(t, entries[1].Timestamp, "Timestamp should not be nil")
+
+// 		assert.Equal(t, []byte("value3"), entries[2].Value)
+// 		assert.NotNil(t, entries[2].Timestamp, "Timestamp should not be nil")
+
+// 		assert.Equal(t, pb.Command_DELETE, entries[3].Command)
+// 		assert.NotNil(t, entries[3].Timestamp, "Timestamp should not be nil")
+
+// 		assert.Equal(t, []byte("value5"), entries[4].Value)
+// 		assert.NotNil(t, entries[4].Timestamp, "Timestamp should not be nil")
+
+// 		reopenFile = !reopenFile
+// 		os.Remove(testFileName)
+// 	}
+// }
+
+// Test RangeScan with updated entries.
+func TestRangeScanWithUpdatedEntries(t *testing.T) {
+	t.Parallel()
+
+	var reopenFile bool = true
+
+	for i := 0; i < 2; i++ {
+		testFileName := "TestRangeScanWithUpdatedEntries.sst"
+		// Create a new LSM memtable.
+		memtable := velocitylog.NewMemtable()
+
+		populateMemtableWithTestData(memtable)
+
+		// Update the memtable.
+		memtable.Put("key1", []byte("value1-updated"))
+		memtable.Put("key3", []byte("value3-updated"))
+		memtable.Put("key5", []byte("value5-updated"))
+
+		// Write the memtable to an SSTable.
+		sstable, err := velocitylog.SerializeToSSTable(memtable.GenerateEntries(), testFileName)
+		assert.Nil(t, err)
+		defer sstable.Close()
+
+		if reopenFile {
+			if err := sstable.Close(); err != nil {
+				t.Fatal(err)
+			}
+			// Open the SSTable for reading.
+			sstable, err = velocitylog.OpenSSTable(testFileName)
+			assert.Nil(t, err)
+		}
+
+		// Range scan the SSTable.
+		entries, err := sstable.RangeScan("key1", "key5")
+		assert.Nil(t, err)
+		assert.Equal(t, 5, len(entries))
+
+		assert.Equal(t, []byte("value1-updated"), entries[0].Value)
+		assert.NotNil(t, entries[0].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, pb.Command_DELETE, entries[1].Command)
+		assert.NotNil(t, entries[1].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, []byte("value3-updated"), entries[2].Value)
+		assert.NotNil(t, entries[2].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, pb.Command_DELETE, entries[3].Command)
+		assert.NotNil(t, entries[3].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, []byte("value5-updated"), entries[4].Value)
+		assert.NotNil(t, entries[4].Timestamp, "Timestamp should not be nil")
+
+		reopenFile = !reopenFile
+		os.Remove(testFileName)
+	}
+}
+
+// Test RangeScan on an SSTable with non-exact Range.
+func TestRangeScanNonExactRange2(t *testing.T) {
+	t.Parallel()
+
+	var reopenFile bool = true
+
+	for i := 0; i < 2; i++ {
+		testFileName := "TestRangeScanNonExactRange2.sst"
+
+		// Create a new LSM memtable.
+		memtable := velocitylog.NewMemtable()
+
+		populateMemtableWithTestData(memtable)
+
+		// Write the memtable to an SSTable.
+		sstable, err := velocitylog.SerializeToSSTable(memtable.GenerateEntries(), testFileName)
+		assert.Nil(t, err)
+		defer sstable.Close()
+
+		if reopenFile {
+			if err := sstable.Close(); err != nil {
+				t.Fatal(err)
+			}
+			// Open the SSTable for reading.
+			sstable, err = velocitylog.OpenSSTable(testFileName)
+			assert.Nil(t, err)
+		}
+
+		// Range scan the SSTable.
+		entries, err := sstable.RangeScan("z", "za")
+		assert.Nil(t, err)
+		assert.Equal(t, 0, len(entries))
+
+		reopenFile = !reopenFile
+		os.Remove(testFileName)
+	}
+}
+
+// Test ReadAll on an SSTable.
+func TestGetEntries(t *testing.T) {
+	t.Parallel()
+
+	var reopenFile bool = true
+
+	for i := 0; i < 2; i++ {
+		testFileName := "TestGetEntries.sst"
+
+		// Create a new LSM memtable.
+		memtable := velocitylog.NewMemtable()
+
+		populateMemtableWithTestData(memtable)
+
+		// Write the memtable to an SSTable.
+		sstable, err := velocitylog.SerializeToSSTable(memtable.GenerateEntries(), testFileName)
+		assert.Nil(t, err)
+		defer sstable.Close()
+
+		if reopenFile {
+			if err := sstable.Close(); err != nil {
+				t.Fatal(err)
+			}
+			// Open the SSTable for reading.
+			sstable, err = velocitylog.OpenSSTable(testFileName)
+			assert.Nil(t, err)
+		}
+
+		// Read all entries from the SSTable.
+		entries, err := sstable.GetEntries()
+		assert.Nil(t, err)
+		assert.Equal(t, 5, len(entries))
+
+		assert.Equal(t, []byte("value1"), entries[0].Value)
+		assert.NotNil(t, entries[0].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, pb.Command_DELETE, entries[1].Command)
+		assert.NotNil(t, entries[1].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, []byte("value3"), entries[2].Value)
+		assert.NotNil(t, entries[2].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, pb.Command_DELETE, entries[3].Command)
+		assert.NotNil(t, entries[3].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, []byte("value5"), entries[4].Value)
+		assert.NotNil(t, entries[4].Timestamp, "Timestamp should not be nil")
+
+		reopenFile = !reopenFile
+		os.Remove(testFileName)
+	}
+}
+
+func TestSSTableIterator(t *testing.T) {
+	t.Parallel()
+
+	var reopenFile bool = true
+
+	for i := 0; i < 2; i++ {
+		testFileName := "TestSSTableIterator.sst"
+
+		// Create a new LSM memtable.
+		memtable := velocitylog.NewMemtable()
+
+		populateMemtableWithTestData(memtable)
+
+		// Write the memtable to an SSTable.
+		sstable, err := velocitylog.SerializeToSSTable(memtable.GenerateEntries(), testFileName)
+		assert.Nil(t, err)
+		defer sstable.Close()
+
+		if reopenFile {
+			if err := sstable.Close(); err != nil {
+				t.Fatal(err)
+			}
+			// Open the SSTable for reading.
+			sstable, err = velocitylog.OpenSSTable(testFileName)
+			assert.Nil(t, err)
+		}
+
+		// Iterate over the SSTable.
+		iter := sstable.Front()
+		defer iter.Close()
+
+		// Read all entries from the SSTable.
+		entries := make([]*pb.LSMEntry, 0)
+		for iter != nil {
+			entries = append(entries, iter.Value)
+			iter = iter.Next()
+		}
+		assert.Equal(t, 5, len(entries))
+
+		assert.Equal(t, "value1", string(entries[0].Value))
+		assert.NotNil(t, entries[0].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, pb.Command_DELETE, entries[1].Command)
+		assert.NotNil(t, entries[1].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, "value3", string(entries[2].Value))
+		assert.NotNil(t, entries[2].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, pb.Command_DELETE, entries[3].Command)
+		assert.NotNil(t, entries[3].Timestamp, "Timestamp should not be nil")
+
+		assert.Equal(t, "value5", string(entries[4].Value))
+		assert.NotNil(t, entries[4].Timestamp, "Timestamp should not be nil")
+
+		reopenFile = !reopenFile
+		os.Remove(testFileName)
+	}
+}
+
 func populateMemtableWithTestData(memtable *velocitylog.Memtable) {
 	memtable.Put("key1", []byte("value1"))
 	memtable.Put("key2", []byte("value2"))
