@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	velocitylog "github.com/danish45007/velocitylog"
+	velocitylog "github.com/danish45007/velocitylog/internal"
+	pb "github.com/danish45007/velocitylog/proto"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -169,7 +170,7 @@ func TestMemtableGenerateEntries(t *testing.T) {
 	assert.Equal(t, 1, len(entries), "memtable.GetSerializableEntries() should return 1 with one entry")
 	assert.Equal(t, "foo0", entries[0].Key, "memtable.GetSerializableEntries() should return [\"foo\"] with one entry")
 	assert.Equal(t, "bar", string(entries[0].Value), "memtable.GetSerializableEntries() should return [\"bar\"] with one entry")
-	assert.Equal(t, velocitylog.Command_PUT, entries[0].Command, "memtable.GetSerializableEntries() should return [PUT] with one entry")
+	assert.Equal(t, pb.Command_PUT, entries[0].Command, "memtable.GetSerializableEntries() should return [PUT] with one entry")
 
 	// Test GetSerializableEntries() with multiple entries.
 	memtable.Put("foo0", []byte("bar0"))
@@ -187,7 +188,7 @@ func TestMemtableGenerateEntries(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		assert.Equal(t, fmt.Sprintf("foo%d", i), entries[i].Key, "memtable.GetSerializableEntries() should return [\"foo0\", \"foo1\", ..., \"foo9\"] with multiple entries")
 		assert.Equal(t, []byte(fmt.Sprintf("bar%d", i)), entries[i].Value, "memtable.GetSerializableEntries() should return [\"bar0\", \"bar1\", ..., \"bar9\"] with multiple entries")
-		assert.Equal(t, velocitylog.Command_PUT, entries[i].Command, "memtable.GetSerializableEntries() should return [PUT] with multiple entries")
+		assert.Equal(t, pb.Command_PUT, entries[i].Command, "memtable.GetSerializableEntries() should return [PUT] with multiple entries")
 	}
 
 	// Test GetSerializableEntries() with a deleted entry.
@@ -202,11 +203,11 @@ func TestMemtableGenerateEntries(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		assert.Equal(t, fmt.Sprintf("foo%d", i), entries[i].Key, "memtable.GetSerializableEntries() should return [\"foo0\", \"foo1\", ..., \"foo9\"] with a deleted entry")
 		if i == 0 || i == 1 || i == 8 {
-			assert.Equal(t, velocitylog.Command_DELETE, entries[i].Command, "memtable.GetSerializableEntries() should return [DELETE] with a deleted entry")
+			assert.Equal(t, pb.Command_DELETE, entries[i].Command, "memtable.GetSerializableEntries() should return [DELETE] with a deleted entry")
 			// Value should be nil.
 			assert.Nil(t, entries[i].Value, "memtable.GetSerializableEntries() should return nil with a deleted entry")
 		} else {
-			assert.Equal(t, velocitylog.Command_PUT, entries[i].Command, "memtable.GetSerializableEntries() should return [PUT] with a deleted entry")
+			assert.Equal(t, pb.Command_PUT, entries[i].Command, "memtable.GetSerializableEntries() should return [PUT] with a deleted entry")
 			assert.Equal(t, []byte(fmt.Sprintf("bar%d", i)), entries[i].Value, "memtable.GetSerializableEntries() should return [\"bar0\", \"bar1\", ..., \"bar9\"] with a deleted entry")
 		}
 	}

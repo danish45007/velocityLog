@@ -12,6 +12,7 @@ import (
 	"time"
 
 	wal "github.com/danish45007/GoLogMatrix"
+	pb "github.com/danish45007/velocitylog/proto"
 )
 
 // maxSSTableInLevel is the maximum number of SSTables in each level of the LSM tree.
@@ -156,9 +157,9 @@ func (l *LSMTree) Put(key string, value []byte) error {
 
 	// Write to WAL before to memtable. And we don't need to write entries to WAL if we are recovering from WAL.
 	if !l.inRecovery {
-		marshalEntry := MarshalEntry(&WALEntry{
+		marshalEntry := MarshalEntry(&pb.WALEntry{
 			Key:       key,
-			Command:   Command_PUT,
+			Command:   pb.Command_PUT,
 			Value:     value,
 			Timestamp: time.Now().UnixNano(),
 		})
@@ -191,9 +192,9 @@ func (l *LSMTree) Delete(key string) error {
 
 	// Write to WAL before to memtable. And we don't need to write entries to WAL if we are recovering from WAL.
 	if !l.inRecovery {
-		marshalEntry := MarshalEntry(&WALEntry{
+		marshalEntry := MarshalEntry(&pb.WALEntry{
 			Key:       key,
-			Command:   Command_DELETE,
+			Command:   pb.Command_DELETE,
 			Timestamp: time.Now().UnixNano(),
 		})
 		l.wal.WriteEntity(marshalEntry)
@@ -271,7 +272,7 @@ func (l *LSMTree) Get(key string) ([]byte, error) {
 // the entries are returned in sorted order
 
 func (l *LSMTree) RangeScan(startKey string, endKey string) ([]KVPair, error) {
-	ranges := [][]*LSMEntry{}
+	ranges := [][]*pb.LSMEntry{}
 	// acquire all the locks together to ensure a consistent view of the LSM tree for the range scan.
 
 	// acquire a read lock on the memtable.
@@ -562,9 +563,9 @@ func (l *LSMTree) flushMemtable(memtable *Memtable) {
 
 	// create a wal checkpoint for the SSTable.
 	l.wal.CreateCheckPoint(
-		MarshalEntry(&WALEntry{
+		MarshalEntry(&pb.WALEntry{
 			Key:       sstableFileName,
-			Command:   Command_WRITE_SST,
+			Command:   pb.Command_WRITE_SST,
 			Timestamp: time.Now().UnixNano(),
 		}))
 
@@ -607,17 +608,17 @@ func (l *LSMTree) processWALEntry(entry *wal.WAL_Entry) error {
 		// NOTE: we may use this checkpoint entry to recover in more sophisticated scenarios.
 		return nil
 	}
-	walEntry := WALEntry{}
+	walEntry := pb.WALEntry{}
 	// unmarshal the entry.
 	UnmarshalEntry(entry.GetData(), &walEntry)
 
 	// process the entry based on the command.
 	switch walEntry.Command {
-	case Command_PUT:
+	case pb.Command_PUT:
 		return l.Put(walEntry.Key, walEntry.Value)
-	case Command_DELETE:
+	case pb.Command_DELETE:
 		return l.Delete(walEntry.Key)
-	case Command_WRITE_SST:
+	case pb.Command_WRITE_SST:
 		return errors.New("unexpected SSTable write entry in WAL")
 	default:
 		return errors.New("unknown command in WAL entry")

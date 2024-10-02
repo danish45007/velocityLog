@@ -3,24 +3,26 @@ package velocitylog
 import (
 	"io"
 	"os"
+
+	pb "github.com/danish45007/velocitylog/proto"
 )
 
 // EntrySize is the size of an entry in the log.
 type EntrySize int64
 
 type SSTable struct {
-	bloomFilter *BloomFilter // Bloom filter for the SSTable.
-	index       *Index       // Index for the SSTable.
-	file        *os.File     // File handle for on-disk ssTable file storage.
-	dataOffset  EntrySize    // Offset from where the actual entries start in the file.
+	bloomFilter *pb.BloomFilter // Bloom filter for the SSTable.
+	index       *pb.Index       // Index for the SSTable.
+	file        *os.File        // File handle for on-disk ssTable file storage.
+	dataOffset  EntrySize       // Offset from where the actual entries start in the file.
 
 }
 
 // SSTableIterator is an iterator for SSTable
 type SSTableIterator struct {
-	sst   *SSTable  // pointer to the associated SSTable.
-	file  *os.File  // file handle for the SSTable file.
-	Value *LSMEntry // current entry.
+	sst   *SSTable     // pointer to the associated SSTable.
+	file  *os.File     // file handle for the SSTable file.
+	Value *pb.LSMEntry // current entry.
 
 }
 
@@ -37,7 +39,7 @@ The data entries are written in the following format:
 1. Size of the entry (OffsetSize)
 2. Entry data (LSMEntry ProtoBuf)
 */
-func SerializeToSSTable(messages []*LSMEntry, filename string) (*SSTable, error) {
+func SerializeToSSTable(messages []*pb.LSMEntry, filename string) (*SSTable, error) {
 	bloomFilter, index, buffEntries, err := generateMetaDataAndEntriesBuffer(messages)
 	if err != nil {
 		return nil, err
@@ -89,9 +91,9 @@ func (s *SSTable) Close() error {
 
 // Get returns the value/ for the given key from the SSTable.
 // Returns nil if the key is not found.
-func (s *SSTable) Get(key string) (*LSMEntry, error) {
+func (s *SSTable) Get(key string) (*pb.LSMEntry, error) {
 	// check if the key is present in the bloom filter.
-	if !s.bloomFilter.Contains([]byte(key)) {
+	if !Contains(s.bloomFilter, []byte(key)) {
 		return nil, nil
 	}
 	// get the offset of the key from the index.
@@ -107,31 +109,30 @@ func (s *SSTable) Get(key string) (*LSMEntry, error) {
 		return nil, err
 	}
 	// read the size of the entry.
-	size, err := readDataSize(s.file)
+	size, _ := readDataSize(s.file)
 
 	// read the entry data.
 	data, err := readEntryFromFile(s.file, size)
 	if err != nil {
 		return nil, err
 	}
-	entry := &LSMEntry{}
+	entry := &pb.LSMEntry{}
 	UnmarshalEntry(data, entry)
 	return entry, nil
 
 }
 
 // rangeScan returns all the entries in the SSTable that have keys in the range [startKey, endKey) inclusive.
-func (s *SSTable) RangeScan(startKey, endKey string) ([]*LSMEntry, error) {
+func (s *SSTable) RangeScan(startKey, endKey string) ([]*pb.LSMEntry, error) { // Change here
 	startOffsetKey, found := findOffsetForKey(startKey, s.index.Index)
 	if !found {
 		return nil, nil
 	}
-	// seek to the offset of the start key plus the dataOffset in the file.
 	_, err := s.file.Seek(int64(s.dataOffset+EntrySize(startOffsetKey)), io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
-	var results []*LSMEntry
+	var results []*pb.LSMEntry
 	for {
 		size, err := readDataSize(s.file)
 		if err != nil {
@@ -144,28 +145,24 @@ func (s *SSTable) RangeScan(startKey, endKey string) ([]*LSMEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		entry := &LSMEntry{}
-		// unmarshal the entry data.
+		entry := &pb.LSMEntry{}
 		UnmarshalEntry(data, entry)
-		// check if the key is within the range.
 		if entry.Key > endKey {
 			break
 		}
-		// we need to include the tombstone entries as well in the range scan.
-		// the caller will need to check the Command Field to see if the entry is a tombstone.
 		results = append(results, entry)
 	}
 	return results, nil
 }
 
 // GetEntries returns all the entries in the SSTable.
-func (s *SSTable) GetEntries() ([]*LSMEntry, error) {
+func (s *SSTable) GetEntries() ([]*pb.LSMEntry, error) {
 	// seek to the start of the data entries in the file.
 	_, err := s.file.Seek(int64(s.dataOffset), io.SeekStart)
 	if err != nil {
 		return nil, err
 	}
-	var results []*LSMEntry
+	var results []*pb.LSMEntry
 	for {
 		size, err := readDataSize(s.file)
 		if err != nil {
@@ -178,7 +175,7 @@ func (s *SSTable) GetEntries() ([]*LSMEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		entry := &LSMEntry{}
+		entry := &pb.LSMEntry{}
 		UnmarshalEntry(data, entry)
 		results = append(results, entry)
 	}
@@ -196,7 +193,7 @@ func (s *SSTable) Front() *SSTableIterator {
 	iterator := &SSTableIterator{
 		sst:   s,
 		file:  file,
-		Value: &LSMEntry{},
+		Value: &pb.LSMEntry{},
 	}
 	// seek to the start of the data entries in the file.
 	_, err = iterator.file.Seek(int64(iterator.sst.dataOffset), io.SeekStart)
@@ -234,7 +231,7 @@ func (it *SSTableIterator) Next() *SSTableIterator {
 	if err != nil {
 		panic(err)
 	}
-	it.Value = &LSMEntry{}
+	it.Value = &pb.LSMEntry{}
 	UnmarshalEntry(data, it.Value)
 	return it
 }

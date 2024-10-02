@@ -3,12 +3,13 @@ package velocitylog
 import (
 	"container/heap"
 
+	pb "github.com/danish45007/velocitylog/proto"
 	"github.com/huandu/skiplist"
 )
 
 // heap entry for k-way merge algorithm
 type heapEntry struct {
-	entry     *LSMEntry
+	entry     *pb.LSMEntry
 	listIndex int              //index of entry source
 	index     int              //index of entry in the list
 	iterator  *SSTableIterator //iterator for the entry
@@ -56,7 +57,7 @@ func (h *mergeHeap) Pop() interface{} {
 // them into a single sorted list of key-value pairs without duplicates.
 // Deduplication is done by keeping track of the most recent entry for a key and discarding
 // the older entries using the timestamp.
-func mergeRanges(ranges [][]*LSMEntry) []KVPair {
+func mergeRanges(ranges [][]*pb.LSMEntry) []KVPair {
 	// create a min heap
 	minHeap := &mergeHeap{}
 	// initialize the heap
@@ -101,7 +102,7 @@ func mergeRanges(ranges [][]*LSMEntry) []KVPair {
 	for iter != nil {
 		entry := iter.Value.(heapEntry)
 		// check the command field in the LSMEntry to determine if the entry is a tombstone or not.
-		if entry.entry.Command == Command_DELETE {
+		if entry.entry.Command == pb.Command_DELETE {
 			iter = iter.Next()
 			continue
 		}
@@ -115,11 +116,11 @@ func mergeRanges(ranges [][]*LSMEntry) []KVPair {
 // and merges them into a single range without any duplicate entries.
 // Deduplication is done by keeping track of the most recent entry for each key
 // and discarding the older ones using the timestamp.
-func mergeIterators(iterators []*SSTableIterator) []*LSMEntry {
+func mergeIterators(iterators []*SSTableIterator) []*pb.LSMEntry {
 	minHeap := &mergeHeap{}
 	heap.Init(minHeap)
 
-	var results []*LSMEntry
+	var results []*pb.LSMEntry
 
 	// Keep track of the most recent entry for each key, in sorted order of keys.
 	seen := skiplist.New(skiplist.String)
@@ -160,7 +161,7 @@ func mergeIterators(iterators []*SSTableIterator) []*LSMEntry {
 	iter := seen.Front()
 	for iter != nil {
 		entry := iter.Value.(heapEntry)
-		if entry.entry.Command == Command_DELETE {
+		if entry.entry.Command == pb.Command_DELETE {
 			iter = iter.Next()
 			continue
 		}

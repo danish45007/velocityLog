@@ -5,13 +5,15 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+
+	pb "github.com/danish45007/velocitylog/proto"
 )
 
 // Generate a bloom filter, index and entries buffer for the SSTable from list of MemtableKeyValue entries.
-func generateMetaDataAndEntriesBuffer(messages []*LSMEntry) (*BloomFilter, *Index, *bytes.Buffer, error) {
+func generateMetaDataAndEntriesBuffer(messages []*pb.LSMEntry) (*pb.BloomFilter, *pb.Index, *bytes.Buffer, error) {
 	var (
-		bloomFilter   *BloomFilter = newBloomFilter(BloomFilterSize)
-		index         []*IndexEntry
+		bloomFilter   *pb.BloomFilter = newBloomFilter(BloomFilterSize)
+		index         []*pb.IndexEntry
 		currentOffset EntrySize     = InitialOffset
 		entriesBuffer *bytes.Buffer = new(bytes.Buffer) // Buffer to store the entries.
 	)
@@ -22,11 +24,11 @@ func generateMetaDataAndEntriesBuffer(messages []*LSMEntry) (*BloomFilter, *Inde
 		entrySize := EntrySize(len(marshalEntry))
 
 		// add the entry to index and bloom filter.
-		index = append(index, &IndexEntry{
+		index = append(index, &pb.IndexEntry{
 			Key:    message.Key,
 			Offset: int64(currentOffset),
 		})
-		bloomFilter.Add([]byte(message.Key))
+		Add(bloomFilter, []byte(message.Key))
 
 		// write the entry size and entry data to the buffer.
 		// entry size is written as a 64-bit integer in little-endian format.
@@ -40,7 +42,7 @@ func generateMetaDataAndEntriesBuffer(messages []*LSMEntry) (*BloomFilter, *Inde
 		currentOffset += EntrySize(binary.Size(entrySize)) + entrySize
 
 	}
-	return bloomFilter, &Index{
+	return bloomFilter, &pb.Index{
 		Index: index,
 	}, entriesBuffer, nil
 }
@@ -105,7 +107,7 @@ func readEntryFromFile(file *os.File, size EntrySize) ([]byte, error) {
 }
 
 // readSSTableMetadata reads the bloom filter, index and data offset from the SSTable file.
-func readSSTableMetadata(file *os.File) (*BloomFilter, *Index, EntrySize, error) {
+func readSSTableMetadata(file *os.File) (*pb.BloomFilter, *pb.Index, EntrySize, error) {
 	var dataOffset EntrySize = InitialOffset
 
 	// read the bloom filter size from the file.
@@ -141,9 +143,9 @@ func readSSTableMetadata(file *os.File) (*BloomFilter, *Index, EntrySize, error)
 	dataOffset += EntrySize(len(indexData))
 
 	// unmarshal the bloom filter and index data.
-	bloomFilter := &BloomFilter{}
+	bloomFilter := &pb.BloomFilter{}
 	UnmarshalEntry(bloomFilterData, bloomFilter)
-	index := &Index{}
+	index := &pb.Index{}
 	UnmarshalEntry(indexData, index)
 
 	return bloomFilter, index, dataOffset, nil
@@ -151,7 +153,7 @@ func readSSTableMetadata(file *os.File) (*BloomFilter, *Index, EntrySize, error)
 }
 
 // findOffsetForKey finds the offset of the key in the SSTable index using binary search.
-func findOffsetForKey(key string, index []*IndexEntry) (EntrySize, bool) {
+func findOffsetForKey(key string, index []*pb.IndexEntry) (EntrySize, bool) {
 	low, high := 0, len(index)-1
 	for low <= high {
 		mid := low + (high-low)/2
@@ -170,7 +172,7 @@ func findOffsetForKey(key string, index []*IndexEntry) (EntrySize, bool) {
 // finds the start offset key for the range scan.
 // The start offset key is the smallest key in the SSTable that is greater than or equal to the start key.
 // using binary search.
-func findStartOffsetForRangeScan(index []*IndexEntry, startKey string) (EntrySize, bool) {
+func findStartOffsetForRangeScan(index []*pb.IndexEntry, startKey string) (EntrySize, bool) {
 	low, high := 0, len(index)-1
 	for low <= high {
 		mid := low + (high-low)/2
